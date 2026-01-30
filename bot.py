@@ -3,55 +3,59 @@ import requests
 import yfinance as yf
 from datetime import datetime
 
-# ====== ENV จาก GitHub Secrets ======
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-# ====== เช็กสินทรัพย์ ======
-def check_asset(symbol, name, th1, th2):
+assets = [
+    ("SPY", "S&P 500"),
+    ("QQQ", "Nasdaq"),
+    ("GLD", "Gold"),
+    ("CL=F", "WTI Oil"),
+    ("BTC-USD", "Bitcoin"),
+    ("ETH-USD", "Ethereum"),
+]
+
+def get_change(symbol):
     data = yf.download(
         symbol,
-        period="1y",
-        auto_adjust=True,
+        period="2d",
+        interval="1h",
         progress=False
     )
 
-    if data.empty:
-        return f"⚠️ {name}: ดึงข้อมูลไม่ได้"
+    if len(data) < 2:
+        return None
 
-    current = data["Close"].iloc[-1].item()
-    high_1y = data["Close"].max().item()
-    drop_pct = (current - high_1y) / high_1y * 100
+    now_price = data["Close"].iloc[-1]
+    yesterday_close = data["Close"].iloc[0]
+    today_open = data["Open"].iloc[-24] if len(data) >= 24 else data["Open"].iloc[0]
 
-    if drop_pct <= -th2:
-        return f"🚨 {name}: ย่อลึก {drop_pct:.2f}% → ลงเพิ่มได้"
-    elif drop_pct <= -th1:
-        return f"⚠️ {name}: ย่อ {drop_pct:.2f}% → ลงได้ 1 ก้อน"
-    elif drop_pct > 0:
-        return f"📈 {name}: ทำจุดสูงสุดใหม่ → ไม่ควรไล่ราคา"
-    else:
-        return f"⏳ {name}: ยังไม่เข้าเงื่อนไข ({drop_pct:.2f}%)"
+    pct_from_yesterday = (now_price - yesterday_close) / yesterday_close * 100
+    pct_today = (now_price - today_open) / today_open * 100
 
-# ====== เช็กตลาด ======
-sp_msg = check_asset("SPY", "S&P 500 (ตลาดกว้าง)", 10, 15)
-qqq_msg = check_asset("QQQ", "Nasdaq / AI", 10, 15)
-gld_msg = check_asset("GLD", "ทองคำโลก", 5, 8)
+    return now_price, pct_from_yesterday, pct_today
+
+results = []
+for symbol, name in assets:
+    res = get_change(symbol)
+    if res:
+        price, pct_y, pct_t = res
+        emoji = "📈" if pct_y > 0 else "📉"
+        results.append(
+            f"{emoji} {name}: {price:.2f}\n"
+            f"   เทียบเมื่อวาน: {pct_y:+.2f}%\n"
+            f"   วันนี้: {pct_t:+.2f}%"
+        )
 
 now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-message = (
-    f"📊 รายงานตลาด ({now})\n\n"
-    f"{sp_msg}\n"
-    f"{qqq_msg}\n"
-    f"{gld_msg}"
-)
+message = f"⏰ Market Hourly Report ({now})\n\n"
+for r in results:
+    message += r + "\n\n"
 
-# ====== ส่ง Telegram ======
+# ส่ง Telegram
 url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 requests.post(
     url,
-    data={
-        "chat_id": CHAT_ID,
-        "text": message
-    }
+    data={"chat_id": CHAT_ID, "text": message}
 )
